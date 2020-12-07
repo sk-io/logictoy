@@ -37,11 +37,12 @@ final int MAX_TILE_UPDATES = 1000;
 Queue<Point> tile_updates[];
 int flip = 0;
 int frame_counter = 0;
-byte[] fill_visited;
+byte[] visited;
 
 int cam_x = 0, cam_y = 0;
 int drag_x, drag_y;
 boolean dragging = false;
+boolean paused = true;
 
 void reload_image() {
   PImage img = loadImage("circuit.png");
@@ -59,12 +60,14 @@ void reload_image() {
     }
   }
   
-  fill_visited = new byte[w * h];
+  visited = new byte[w * h];
   
   tile_updates = new ArrayDeque[2];
   tile_updates[0] = new ArrayDeque(MAX_TILE_UPDATES);
   tile_updates[1] = new ArrayDeque(MAX_TILE_UPDATES);
   
+  // perform initial full scale update
+  // puts flip-flops into flickering state
   for (int y = 0; y < h; y++) {
     for (int x = 0; x < w; x++) {
       if (get_tile(x, y) == T_GATE) {
@@ -143,7 +146,7 @@ int num_adj_active_fuck(int x, int y, byte t, byte t2) {
 boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point> update_list, Point origin) {
   if (outside_bounds(x, y))
     return false;
-  if (fill_visited[x + y * w] == 1)
+  if (visited[x + y * w] == 1)
     return false;
   
   boolean ret = false;
@@ -151,15 +154,13 @@ boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point
   
   if (tile == T_WIRE) {
     queue.add(new Point(x, y));
-    fill_visited[x + y * w] = 1;
+    visited[x + y * w] = 1;
   } else if (tile == T_CROSS) {
-    fill_visited[x + y * w] = 1;
-    
     int cx = 2 * x - origin.x, cy = 2 * y - origin.y;
     
-    if (get_tile(cx, cy) == T_WIRE) {
+    if (get_tile(cx, cy) == T_WIRE && visited[cx + cy * w] == 0) {
       queue.add(new Point(cx, cy));
-      fill_visited[cx + cy * w] = 1;
+      visited[cx + cy * w] = 1;
     }
   } else {
     if (tile != T_GATE_IN && is_active(x, y)) ret = true;
@@ -170,8 +171,6 @@ boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point
 }
 
 void update_wires(int x, int y) {
-  // optimize: do all wires last?
-  
   if (is_active(x, y) == num_adj_active_fuck(x, y, T_WIRE, T_GATE_IN) > 0)
     return;
   
@@ -180,14 +179,11 @@ void update_wires(int x, int y) {
   // the next state for all of the visited wires
   boolean state = false;
   
-  for (int i = 0; i < w * h; i++)
-    fill_visited[i] = 0;
-  
   ArrayList<Point> queue = new ArrayList<Point>();
   ArrayList<Point> update_list = new ArrayList<Point>();
   
   queue.add(new Point(x, y));
-  fill_visited[x + y * w] = 1;
+  visited[x + y * w] = 1;
   
   for (int i = 0; i < queue.size(); i++) {
     Point p = queue.get(i);
@@ -246,6 +242,7 @@ void update_at(int x, int y) {
     set_active(x, y, next);
     
     // gate input only updates gates
+    // optimization: gates only update wires, and wires only update gate inputs
     if (tile == T_GATE_IN) {
       if (get_tile(x + 1, y) == T_GATE) queue_tile_update(x + 1, y);
       if (get_tile(x - 1, y) == T_GATE) queue_tile_update(x - 1, y);
@@ -260,18 +257,37 @@ void update_at(int x, int y) {
   }
 }
 
+int steps = 0;
+long acc = 0;
+
 void step() {
+  long start = System.nanoTime();
   flip ^= 1;
+  
+  // clear visited
+  for (int i = 0; i < w * h; i++)
+    visited[i] = 0;
+  
   Point p;
   while (!tile_updates[flip].isEmpty()) {
     p = tile_updates[flip].remove();
     update_at(p.x, p.y);
+  }
+  
+  acc += System.nanoTime() - start;
+  steps++;
+  if (steps == 200) {
+    double avg = (double) acc / (double) steps;
+    println("avg nanos per step: " + avg);
+    steps = 0;
+    acc = 0;
   }
 }
 
 void setup() {
   size(800, 800);
   frameRate(60);
+  textSize(20);
   
   reload_image();
 }
@@ -282,7 +298,8 @@ void draw() {
     cam_y = -mouseY + drag_y;
   }
   
-  step();
+  if (!paused)
+    step();
   
   //if (frame_counter++ == 5) {
   //  frame_counter = 0;
@@ -305,11 +322,20 @@ void draw() {
       rect(x * cell_size - cam_x, y * cell_size - cam_y, cell_size, cell_size);
     }
   }
+  
+  if (paused) {
+    noStroke();
+    fill(#FFFFFF);
+    text("paused", 16, 32);
+  }
 }
 
 void keyPressed() {
   if (key == 'r') {
     reload_image();
+  }
+  if (keyCode == 32) {
+    paused = !paused;
   }
 }
 
