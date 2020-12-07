@@ -36,8 +36,7 @@ int cell_size = 8;
 final int MAX_TILE_UPDATES = 1000;
 Queue<Point> tile_updates[];
 int flip = 0;
-int frame_counter = 0;
-byte[] visited;
+byte[] visited; // bitset? slower
 
 int cam_x = 0, cam_y = 0;
 int drag_x, drag_y;
@@ -78,6 +77,7 @@ void reload_image() {
 }
 
 byte lookup_tile(color c) {
+  // optimize: hash map
   for (byte i = 0; i < tiles.length; i++) {
     if (tiles[i] == c)
       return i;
@@ -116,31 +116,20 @@ void queue_tile_update(int x, int y) {
   tile_updates[flip ^ 1].add(new Point(x, y));
 }
 
-int num_adj_active(int x, int y) {
+int num_active_adj_of_type(int x, int y, byte t) {
   int i = 0;
-  i += is_active(x + 1, y) ? 1 : 0;
-  i += is_active(x - 1, y) ? 1 : 0;
-  i += is_active(x, y + 1) ? 1 : 0;
-  i += is_active(x, y - 1) ? 1 : 0;
+  if (get_tile(x + 1, y) == t) if (is_active(x + 1, y)) i++;
+  if (get_tile(x - 1, y) == t) if (is_active(x - 1, y)) i++;
+  if (get_tile(x, y + 1) == t) if (is_active(x, y + 1)) i++;
+  if (get_tile(x, y - 1) == t) if (is_active(x, y - 1)) i++;
   return i;
 }
 
-int num_adj_active_of_type(int x, int y, byte t) {
-  int i = 0;
-  if (is_active(x + 1, y) && get_tile(x + 1, y) == t) i++;
-  if (is_active(x - 1, y) && get_tile(x - 1, y) == t) i++;
-  if (is_active(x, y + 1) && get_tile(x, y + 1) == t) i++;
-  if (is_active(x, y - 1) && get_tile(x, y - 1) == t) i++;
-  return i;
-}
-
-int num_adj_active_fuck(int x, int y, byte t, byte t2) {
-  int i = 0;
-  if (is_active(x + 1, y) && get_tile(x + 1, y) != t && get_tile(x + 1, y) != t2) i++;
-  if (is_active(x - 1, y) && get_tile(x - 1, y) != t && get_tile(x - 1, y) != t2) i++;
-  if (is_active(x, y + 1) && get_tile(x, y + 1) != t && get_tile(x, y + 1) != t2) i++;
-  if (is_active(x, y - 1) && get_tile(x, y - 1) != t && get_tile(x, y - 1) != t2) i++;
-  return i;
+void update_adj_of_type(int x, int y, byte t) {
+  if (get_tile(x + 1, y) == t) queue_tile_update(x + 1, y);
+  if (get_tile(x - 1, y) == t) queue_tile_update(x - 1, y);
+  if (get_tile(x, y + 1) == t) queue_tile_update(x, y + 1);
+  if (get_tile(x, y - 1) == t) queue_tile_update(x, y - 1);
 }
 
 boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point> update_list, Point origin) {
@@ -149,29 +138,34 @@ boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point
   if (visited[x + y * w] == 1)
     return false;
   
-  boolean ret = false;
   byte tile = get_tile(x, y);
   
   if (tile == T_WIRE) {
+    // update adj wires
     queue.add(new Point(x, y));
     visited[x + y * w] = 1;
   } else if (tile == T_CROSS) {
-    int cx = 2 * x - origin.x, cy = 2 * y - origin.y;
-    
+    // update wires on the other side of cross, if any
+    int cx = (x << 1) - origin.x, cy = (y << 1) - origin.y;
     if (get_tile(cx, cy) == T_WIRE && visited[cx + cy * w] == 0) {
       queue.add(new Point(cx, cy));
       visited[cx + cy * w] = 1;
     }
-  } else {
-    if (tile != T_GATE_IN && is_active(x, y)) ret = true;
+  } else if (tile == T_GATE || tile == T_SWITCH) {
+    // wires only get affected by gates and switches
+    if (is_active(x, y)) return true;
+  } else if (tile == T_GATE_IN) {
+    // wires only update gate inputs
     update_list.add(new Point(x, y));
   }
   
-  return ret;
+  return false;
 }
 
 void update_wires(int x, int y) {
-  if (is_active(x, y) == num_adj_active_fuck(x, y, T_WIRE, T_GATE_IN) > 0)
+  // if wire cluster is already same state as updator, ignore
+  int a = num_active_adj_of_type(x, y, T_SWITCH) + num_active_adj_of_type(x, y, T_GATE);
+  if (is_active(x, y) == a > 0)
     return;
   
   //println("doing beeg update at " + x + ", " + y);
@@ -215,20 +209,17 @@ void update_at(int x, int y) {
   
   switch (tile) {
   case T_WIRE:
-    //next = num_adj_active(x, y) != 0;
     update_wires(x, y);
     return;
   case T_GATE_IN:
     int i = 0;
-    if (is_active(x + 1, y) && get_tile(x + 1, y) != T_GATE && get_tile(x + 1, y) != T_GATE_IN) i++;
-    if (is_active(x - 1, y) && get_tile(x - 1, y) != T_GATE && get_tile(x - 1, y) != T_GATE_IN) i++;
-    if (is_active(x, y + 1) && get_tile(x, y + 1) != T_GATE && get_tile(x, y + 1) != T_GATE_IN) i++;
-    if (is_active(x, y - 1) && get_tile(x, y - 1) != T_GATE && get_tile(x, y - 1) != T_GATE_IN) i++;
+    i += num_active_adj_of_type(x, y, T_WIRE);
+    i += num_active_adj_of_type(x, y, T_SWITCH);
     next = i > 0;
     break;
   case T_GATE:
     //next = (num_adj_active_of_type(x, y, (byte) T_GATE_IN) & 1) == 1; // xor
-    next = num_adj_active_of_type(x, y, (byte) T_GATE_IN) == 2 ? false : true; // nand
+    next = num_active_adj_of_type(x, y, (byte) T_GATE_IN) == 2 ? false : true; // nand
     break;
   case T_SWITCH:
   case T_CROSS:
@@ -241,18 +232,13 @@ void update_at(int x, int y) {
   if (next != active) {
     set_active(x, y, next);
     
-    // gate input only updates gates
-    // optimization: gates only update wires, and wires only update gate inputs
-    if (tile == T_GATE_IN) {
-      if (get_tile(x + 1, y) == T_GATE) queue_tile_update(x + 1, y);
-      if (get_tile(x - 1, y) == T_GATE) queue_tile_update(x - 1, y);
-      if (get_tile(x, y + 1) == T_GATE) queue_tile_update(x, y + 1);
-      if (get_tile(x, y - 1) == T_GATE) queue_tile_update(x, y - 1);
-    } else {
-      queue_tile_update(x + 1, y);
-      queue_tile_update(x - 1, y);
-      queue_tile_update(x, y + 1);
-      queue_tile_update(x, y - 1);
+    switch (tile) {
+    case T_GATE_IN:
+      update_adj_of_type(x, y, T_GATE);
+      break;
+    case T_GATE:
+      update_adj_of_type(x, y, T_WIRE);
+      break;
     }
   }
 }
@@ -300,11 +286,6 @@ void draw() {
   
   if (!paused)
     step();
-  
-  //if (frame_counter++ == 5) {
-  //  frame_counter = 0;
-  //  step();
-  //}
   
   background(0);
   noFill();
@@ -366,10 +347,8 @@ void mousePressed() {
     x = p.x; y = p.y;
     
     set_active(x, y, !is_active(x, y));
-    queue_tile_update(x + 1, y);
-    queue_tile_update(x - 1, y);
-    queue_tile_update(x, y + 1);
-    queue_tile_update(x, y - 1);
+    update_adj_of_type(x, y, T_WIRE);
+    update_adj_of_type(x, y, T_GATE_IN);
   } else {
     drag_x = mouseX + cam_x;
     drag_y = mouseY + cam_y;
@@ -378,7 +357,8 @@ void mousePressed() {
 }
 
 void mouseReleased() {
-  dragging = false;
+  if (mouseButton != LEFT)
+    dragging = false;
 }
 
 void mouseWheel(MouseEvent event) {
