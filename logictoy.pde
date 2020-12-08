@@ -41,14 +41,15 @@ int steps_per_sec = 1;
 final int speeds[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 int selected_speed = 6;
 long last_draw_time;
-
 int cam_x = 0, cam_y = 0;
 int drag_x, drag_y;
 boolean dragging = false;
 boolean paused = true;
+boolean ctrl = false;
 
 void reload_image() {
   PImage img = loadImage("circuit.png");
+  img.loadPixels();
   w = img.width;
   h = img.height;
   grid = new byte[w * h];
@@ -73,9 +74,10 @@ void reload_image() {
   // puts flip-flops into flickering state
   for (int y = 0; y < h; y++) {
     for (int x = 0; x < w; x++) {
-      if (get_tile(x, y) == T_GATE) {
+      // updating everything breaks everything
+      if (get_tile(x, y) == T_GATE || get_tile(x, y) == T_SWITCH) {
         queue_tile_update(x, y);
-      }
+      } 
     }
   }
 }
@@ -86,6 +88,11 @@ byte lookup_tile(color c) {
     if (tiles[i] == c)
       return i;
   }
+  for (byte i = 1; i < active_tiles.length; i++) {
+    if (active_tiles[i] == c)
+      return (byte) (i | 0x80);
+  }
+  
   return -1;
 }
 
@@ -226,6 +233,9 @@ void update_at(int x, int y) {
     next = num_active_adj_of_type(x, y, (byte) T_GATE_IN) >= 2 ? false : true; // nand, doesnt work with 3 inputs
     break;
   case T_SWITCH:
+    update_adj_of_type(x, y, T_WIRE);
+    update_adj_of_type(x, y, T_GATE_IN);
+    break;
   case T_CROSS:
     break;
   default:
@@ -277,10 +287,13 @@ void step() {
 void setup() {
   size(800, 800);
   frameRate(60);
-  textSize(18);
+  textSize(15);
   
   steps_per_sec = speeds[selected_speed];
   reload_image();
+  
+  cam_x = (w * cell_size - width) / 2;
+  cam_y = (h * cell_size - height) / 2;
 }
 
 double time_acc = 0;
@@ -320,33 +333,51 @@ void draw() {
     }
   }
   
+  
+  final int s = 18;
   noStroke();
   fill(#FFFFFF);
-  text("[q/w] speed: " + speeds[selected_speed] + " steps/sec", 16, 32);
-  text("[space] " + (paused ? "unpause" : "pause"), 16, 54);
-  text("[s] single step", 16, 76);
+  text("[r] reload circuit.png", 16, 32 + s * 0);
+  text("[ctrl-s] save as savestate.png", 16, 32 + s * 1);
+  text("[q/w] speed: " + speeds[selected_speed] + " steps/sec", 16, 32 + s * 3);
+  text("[space] " + (paused ? "unpause" : "pause"), 16, 32 + s * 4);
+  text("[s] single step", 16, 32 + s * 5);
 }
 
 void keyPressed() {
-  if (key == 'r') {
+  //println(keyCode);
+  
+  if (keyCode == 17) // ctrl
+    ctrl = true;
+  
+  if (keyCode == 82) // r
     reload_image();
-  }
-  if (keyCode == 32) {
+  
+  if (keyCode == 32) { // space
     paused = !paused;
     last_draw_time = System.nanoTime();
   }
-  if (key == 's') {
-    if (paused)
+  
+  if (keyCode == 83) { // s
+    if (ctrl)
+      save_state();
+    else if (paused)
       step();
   }
-  if (key == 'q' && selected_speed > 0) {
+  
+  if (keyCode == 81 && selected_speed > 0) { // q
     selected_speed--;
     steps_per_sec = speeds[selected_speed];
   }
-  if (key == 'w' && selected_speed < speeds.length - 1) {
+  if (keyCode == 87 && selected_speed < speeds.length - 1) { // w
     selected_speed++;
     steps_per_sec = speeds[selected_speed];
   }
+}
+
+void keyReleased() {
+  if (keyCode == 17) // ctrl
+    ctrl = false;
 }
 
 Point find_switch(int x, int y) {
@@ -396,4 +427,20 @@ void mouseWheel(MouseEvent event) {
     cell_size = 1;
   if (cell_size > 30)
     cell_size = 30;
+}
+
+void save_state() {
+  PImage out = createImage(w, h, RGB);
+  out.loadPixels();
+  
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      byte t = get_tile(x, y);
+      boolean active = is_active(x, y);
+      out.pixels[x + y * w] = active ? active_tiles[t] : tiles[t];
+    }
+  }
+  out.updatePixels();
+  out.save("savestate.png");
+  println("saved as savestate.png");
 }
