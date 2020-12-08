@@ -31,12 +31,16 @@ class Point {
   Point(int _x, int _y) { x = _x; y = _y; }
 }
 
-byte[] grid; // msb = active
+byte[] grid; // msb = is_active
 int cell_size = 8;
 final int MAX_TILE_UPDATES = 1000;
 Queue<Point> tile_updates[];
 int flip = 0;
 byte[] visited; // bitset? slower
+int steps_per_sec = 1;
+final int speeds[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
+int selected_speed = 6;
+long last_draw_time;
 
 int cam_x = 0, cam_y = 0;
 int drag_x, drag_y;
@@ -52,7 +56,7 @@ void reload_image() {
     for (int x = 0; x < w; x++) {
       byte t = lookup_tile(img.pixels[x + y * w]);
       if (t == -1) {
-        // ignore other tiles
+        // ignore other colors
         t = T_NOTHING;
       }
       grid[x + y * w] = t;
@@ -141,11 +145,11 @@ boolean update_wires_check(int x, int y, ArrayList<Point> queue, ArrayList<Point
   byte tile = get_tile(x, y);
   
   if (tile == T_WIRE) {
-    // update adj wires
+    // visit adj wires
     queue.add(new Point(x, y));
     visited[x + y * w] = 1;
   } else if (tile == T_CROSS) {
-    // update wires on the other side of cross, if any
+    // visit wires on the other side of cross, if any
     int cx = (x << 1) - origin.x, cy = (y << 1) - origin.y;
     if (get_tile(cx, cy) == T_WIRE && visited[cx + cy * w] == 0) {
       queue.add(new Point(cx, cy));
@@ -219,7 +223,7 @@ void update_at(int x, int y) {
     break;
   case T_GATE:
     //next = (num_adj_active_of_type(x, y, (byte) T_GATE_IN) & 1) == 1; // xor
-    next = num_active_adj_of_type(x, y, (byte) T_GATE_IN) == 2 ? false : true; // nand
+    next = num_active_adj_of_type(x, y, (byte) T_GATE_IN) >= 2 ? false : true; // nand, doesnt work with 3 inputs
     break;
   case T_SWITCH:
   case T_CROSS:
@@ -273,10 +277,13 @@ void step() {
 void setup() {
   size(800, 800);
   frameRate(60);
-  textSize(20);
+  textSize(18);
   
+  steps_per_sec = speeds[selected_speed];
   reload_image();
 }
+
+double time_acc = 0;
 
 void draw() {
   if (dragging) {
@@ -284,8 +291,17 @@ void draw() {
     cam_y = -mouseY + drag_y;
   }
   
-  if (!paused)
-    step();
+  if (!paused) {
+    time_acc += System.nanoTime() - last_draw_time;
+    double single = 1000000000.0 / (double) steps_per_sec;
+    
+    while (time_acc >= single) {
+      step();
+      time_acc -= single;
+    }
+    
+    last_draw_time = System.nanoTime();
+  }
   
   background(0);
   noFill();
@@ -304,11 +320,11 @@ void draw() {
     }
   }
   
-  if (paused) {
-    noStroke();
-    fill(#FFFFFF);
-    text("paused", 16, 32);
-  }
+  noStroke();
+  fill(#FFFFFF);
+  text("[q/w] speed: " + speeds[selected_speed] + " steps/sec", 16, 32);
+  text("[space] " + (paused ? "unpause" : "pause"), 16, 54);
+  text("[s] single step", 16, 76);
 }
 
 void keyPressed() {
@@ -317,6 +333,19 @@ void keyPressed() {
   }
   if (keyCode == 32) {
     paused = !paused;
+    last_draw_time = System.nanoTime();
+  }
+  if (key == 's') {
+    if (paused)
+      step();
+  }
+  if (key == 'q' && selected_speed > 0) {
+    selected_speed--;
+    steps_per_sec = speeds[selected_speed];
+  }
+  if (key == 'w' && selected_speed < speeds.length - 1) {
+    selected_speed++;
+    steps_per_sec = speeds[selected_speed];
   }
 }
 
