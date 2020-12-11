@@ -46,6 +46,8 @@ int drag_x, drag_y;
 boolean dragging = false;
 boolean paused = true;
 boolean ctrl = false;
+int num_updates = 0, num_updates_latch = 0;
+long num_updates_last_time;
 
 void reload_image() {
   PImage img = loadImage("circuit.png");
@@ -268,6 +270,7 @@ void step() {
   for (int i = 0; i < w * h; i++)
     visited[i] = 0;
   
+  num_updates += tile_updates[flip].size();
   Point p;
   while (!tile_updates[flip].isEmpty()) {
     p = tile_updates[flip].remove();
@@ -316,6 +319,12 @@ void draw() {
     last_draw_time = System.nanoTime();
   }
   
+  if (System.currentTimeMillis() - num_updates_last_time > 1000) {
+    num_updates_last_time = System.currentTimeMillis();
+    num_updates_latch = num_updates;
+    num_updates = 0;
+  }
+  
   background(0);
   noFill();
   stroke(#888888);
@@ -342,6 +351,8 @@ void draw() {
   text("[q/w] speed: " + speeds[selected_speed] + " steps/sec", 16, 32 + s * 3);
   text("[space] " + (paused ? "unpause" : "pause"), 16, 32 + s * 4);
   text("[s] single step", 16, 32 + s * 5);
+  
+  text(num_updates_latch + " ups/sec", 16, height - 20);
 }
 
 void keyPressed() {
