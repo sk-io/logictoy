@@ -1,9 +1,7 @@
 # logic-toy
-Logic toy that only uses NAND gates
+Logic toy that only uses NAND gates.
 
-Imports circuit.png and lets you play with switches. Very messy code.
-
-Press R to reload
+Imports circuit.png and lets you play with switches.
 
 | Color | Meaning |
 | ------------- | ------------- |

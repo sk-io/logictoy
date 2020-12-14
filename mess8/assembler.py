@@ -13,8 +13,9 @@ instructions = {
     "lda_a": 1,
     "sta_a": 2,
     "adc_i": 3,
-    "jmp_a": 4,
-    "bcs_a": 5,
+    "adc_a": 4,
+    "jmp_a": 5,
+    "bcs_a": 6,
 }
 
 def parse_instruction(src):
@@ -59,3 +60,4 @@ for addr, lab in label_refs.items():
 
 with open(sys.argv[1].replace(".asm", ".bin"), "wb") as f:
     f.write(binary)
+
